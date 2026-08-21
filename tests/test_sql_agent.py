@@ -141,3 +141,5 @@ def test_generate_sql():
         request["response_format"]["json_schema"]["schema_"]
         == SQLGeneration.model_json_schema()
     )
+
+    assert request["provider"] == {"require_parameters": True}

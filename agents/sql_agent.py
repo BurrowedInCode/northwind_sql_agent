@@ -22,6 +22,7 @@ def generate_sql(
 ) -> SQLGeneration:
 
     response = client.chat.send(
+        provider={"require_parameters": True},
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},

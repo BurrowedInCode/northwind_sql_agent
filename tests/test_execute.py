@@ -88,3 +88,20 @@ def test_execute_query_rejects_attach(tmp_path):
         )
 
     assert not attached_database_path.exists()
+
+
+def test_execute_query_rejects_pragma(tmp_path):
+    database_path = tmp_path / "test.db"
+
+    with closing(db.connect(database_path)) as con:
+        con.executescript("""
+                        CREATE TABLE products (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            name TEXT NOT NULL
+                        );
+
+                        INSERT INTO products (name) VALUES ('milk');
+                        """)
+        con.commit()
+    with pytest.raises(db.DatabaseError, match="not authorized"):
+        execute_query(database_path, "PRAGMA table_list")

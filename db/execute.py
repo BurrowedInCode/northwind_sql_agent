@@ -34,6 +34,8 @@ def execute_query(
                 return db.SQLITE_DENY
             if action_code == db.SQLITE_ATTACH:
                 return db.SQLITE_DENY
+            if action_code == db.SQLITE_PRAGMA:
+                return db.SQLITE_DENY
 
             return db.SQLITE_OK
 

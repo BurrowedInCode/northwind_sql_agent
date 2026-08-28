@@ -11,6 +11,14 @@ class SQLGeneration(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class TokenUsage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    cost: float | None = Field(default=None, ge=0)
+
+
 def build_system_prompt(prompt_path: str | Path, schema: str) -> str:
     prompt_text: str = Path(prompt_path).read_text(encoding="utf-8")
 
@@ -38,7 +46,6 @@ def generate_sql(
         },
     )
     content = response.choices[0].message.content
-
     if not isinstance(content, str):
         raise ValueError("OpenRouter returned non-text content")
 

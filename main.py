@@ -19,16 +19,23 @@ def main():
     user_query = input("Question: ").strip()
 
     with OpenRouter(api_key=api_key) as router:
-        generation = generate_sql(
+        result = generate_sql(
             client=router,
             model=model,
             system_prompt=system_prompt,
             user_query=user_query,
         )
 
-        print("SQL: ", generation.sql)
-        print("explanation: ", generation.explanation)
-        print("confidence: ", generation.confidence)
+    generation = result.generation
+    usage = result.usage
+
+    print("SQL: ", generation.sql)
+    print("explanation: ", generation.explanation)
+    print("confidence: ", generation.confidence)
+    print("prompt tokens:", usage.prompt_tokens)
+    print("completion tokens:", usage.completion_tokens)
+    print("total tokens:", usage.total_tokens)
+    print("cost:", usage.cost)
 
     columns, rows = execute_query(database_path=DATABASE_PATH, sql=generation.sql)
     print("columns: ", columns)

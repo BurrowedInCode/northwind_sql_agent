@@ -3,7 +3,13 @@ from unittest.mock import Mock
 import pytest
 from pydantic import ValidationError
 
-from agents.sql_agent import SQLGeneration, build_system_prompt, generate_sql
+from agents.sql_agent import (
+    SQLGeneration,
+    SQLGenerationResult,
+    TokenUsage,
+    build_system_prompt,
+    generate_sql,
+)
 
 
 def test_sql_generation_accepts_valid_data():
@@ -110,6 +116,14 @@ def test_generate_sql():
     "confidence": 0.9
     }
     """
+
+    response.usage = Mock(
+        prompt_tokens=100,
+        completion_tokens=25,
+        total_tokens=125,
+        cost=0.01,
+    )
+
     client.chat.send.return_value = response
 
     result = generate_sql(
@@ -119,10 +133,14 @@ def test_generate_sql():
         user_query="List product names",
     )
 
-    assert isinstance(result, SQLGeneration)
-    assert result.sql == "SELECT ProductName FROM Products"
-    assert result.explanation == "Returns product names."
-    assert result.confidence == 0.9
+    assert isinstance(result, SQLGenerationResult)
+    assert result.generation.sql == "SELECT ProductName FROM Products"
+    assert result.generation.explanation == "Returns product names."
+    assert result.generation.confidence == 0.9
+    assert result.usage.prompt_tokens == 100
+    assert result.usage.completion_tokens == 25
+    assert result.usage.total_tokens == 125
+    assert result.usage.cost == 0.01
 
     client.chat.send.assert_called_once()
 
@@ -143,3 +161,74 @@ def test_generate_sql():
     )
 
     assert request["provider"] == {"require_parameters": True}
+
+
+def test_generate_sql_rejects_missing_usage():
+    client = Mock()
+    response = Mock()
+    response.choices = [Mock()]
+    response.choices[0].message.content = """
+        {
+    "sql": "SELECT 1",
+    "explanation": "Returns one.",
+    "confidence": 1.0
+    }
+    """
+
+    response.usage = None
+
+    client.chat.send.return_value = response
+
+    with pytest.raises(ValueError, match="no usage"):
+        generate_sql(
+            client=client,
+            model="test-model",
+            system_prompt="system instructions",
+            user_query="List product names",
+        )
+
+
+def test_token_usage_valid():
+    token_usage = TokenUsage(
+        prompt_tokens=100, completion_tokens=25, total_tokens=125, cost=0.01
+    )
+
+    assert token_usage.prompt_tokens == 100
+    assert token_usage.completion_tokens == 25
+    assert token_usage.total_tokens == 125
+    assert token_usage.cost == 0.01
+
+
+def test_token_usage_omitted_cost():
+    token_usage = TokenUsage(prompt_tokens=100, completion_tokens=25, total_tokens=125)
+
+    assert token_usage.cost is None
+
+
+def test_token_usage_negative_token():
+    with pytest.raises(ValidationError):
+        TokenUsage(prompt_tokens=-1, completion_tokens=25, total_tokens=125, cost=0.01)
+
+
+def test_sql_generation_result():
+    generation = SQLGeneration(
+        sql="SELECT 1",
+        explanation="Returns one.",
+        confidence=1.0,
+    )
+
+    usage = TokenUsage(
+        prompt_tokens=100,
+        completion_tokens=20,
+        total_tokens=120,
+        cost=0.001,
+    )
+
+    result = SQLGenerationResult(
+        generation=generation,
+        usage=usage,
+    )
+    assert result.generation == generation
+    assert result.usage == usage
+    assert result.generation.sql == "SELECT 1"
+    assert result.usage.total_tokens == 120

@@ -19,6 +19,12 @@ class TokenUsage(BaseModel):
     cost: float | None = Field(default=None, ge=0)
 
 
+class SQLGenerationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    generation: SQLGeneration
+    usage: TokenUsage
+
+
 def build_system_prompt(prompt_path: str | Path, schema: str) -> str:
     prompt_text: str = Path(prompt_path).read_text(encoding="utf-8")
 
@@ -27,8 +33,7 @@ def build_system_prompt(prompt_path: str | Path, schema: str) -> str:
 
 def generate_sql(
     client: OpenRouter, model: str, system_prompt: str, user_query: str
-) -> SQLGeneration:
-
+) -> SQLGenerationResult:
     response = client.chat.send(
         provider={"require_parameters": True},
         model=model,
@@ -49,4 +54,24 @@ def generate_sql(
     if not isinstance(content, str):
         raise ValueError("OpenRouter returned non-text content")
 
-    return SQLGeneration.model_validate_json(json_data=content)
+    generation = SQLGeneration.model_validate_json(json_data=content)
+
+    usage = response.usage
+
+    if usage is None:
+        raise ValueError("OpenRouter returned no usage.")
+
+    cost = usage.cost
+    if isinstance(cost, (int, float)):
+        normalized_cost = float(cost)
+    else:
+        normalized_cost = None
+
+    token_usage = TokenUsage(
+        prompt_tokens=usage.prompt_tokens,
+        completion_tokens=usage.completion_tokens,
+        total_tokens=usage.total_tokens,
+        cost=normalized_cost,
+    )
+
+    return SQLGenerationResult(generation=generation, usage=token_usage)

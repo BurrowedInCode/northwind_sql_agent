@@ -4,12 +4,15 @@ import pytest
 from pydantic import ValidationError
 
 from agents.sql_agent import (
+    SQLAgentResult,
     SQLGeneration,
     SQLGenerationResult,
     TokenUsage,
     build_system_prompt,
     generate_sql,
+    run_sql_agent,
 )
+from db.schema import DATABASE_PATH
 
 
 def test_sql_generation_accepts_valid_data():
@@ -232,3 +235,71 @@ def test_sql_generation_result():
     assert result.usage == usage
     assert result.generation.sql == "SELECT 1"
     assert result.usage.total_tokens == 120
+
+
+def test_sql_agent_result():
+    generation_result = SQLGenerationResult(
+        generation=SQLGeneration(
+            sql="SELECT ProductName, UnitPrice FROM Products",
+            explanation="Returns product names and prices.",
+            confidence=0.9,
+        ),
+        usage=TokenUsage(
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
+            cost=0.001,
+        ),
+    )
+    columns = ["ProductName", "UnitPrice"]
+    rows: list[list[str | int | float | None]] = [
+        ["Chai", 18.0],
+        ["Chang", 19.0],
+    ]
+
+    agent_result = SQLAgentResult(
+        result=generation_result,
+        columns=columns,
+        rows=rows,
+    )
+
+    assert agent_result.result == generation_result
+    assert agent_result.columns == columns
+    assert agent_result.rows == rows
+    assert agent_result.result.generation.sql == generation_result.generation.sql
+
+
+def test_run_sql_agent():
+    client = Mock()
+    response = Mock()
+    response.choices = [Mock()]
+    response.choices[0].message.content = """
+    {
+      "sql": "SELECT 1",
+      "explanation": "Returns one.",
+      "confidence": 1.0
+    }
+    """
+    response.usage = Mock(
+        prompt_tokens=100,
+        completion_tokens=20,
+        total_tokens=120,
+        cost=0.001,
+    )
+    client.chat.send.return_value = response
+
+    agent_result = run_sql_agent(
+        client=client,
+        model="test-model",
+        system_prompt="system instructions",
+        user_query="Return one",
+        database_path=DATABASE_PATH,
+        row_limit=10,
+    )
+
+    assert isinstance(agent_result, SQLAgentResult)
+    assert agent_result.result.generation.sql == "SELECT 1"
+    assert agent_result.result.usage.total_tokens == 120
+    assert agent_result.columns == ["1"]
+    assert agent_result.rows == [[1]]
+    client.chat.send.assert_called_once()

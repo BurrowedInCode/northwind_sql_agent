@@ -3,6 +3,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from openrouter import OpenRouter
 
+from db.execute import execute_query
+
 
 class SQLGeneration(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -23,6 +25,13 @@ class SQLGenerationResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     generation: SQLGeneration
     usage: TokenUsage
+
+
+class SQLAgentResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    result: SQLGenerationResult
+    columns: list[str]
+    rows: list[list[str | int | float | None]]
 
 
 def build_system_prompt(prompt_path: str | Path, schema: str) -> str:
@@ -75,3 +84,25 @@ def generate_sql(
     )
 
     return SQLGenerationResult(generation=generation, usage=token_usage)
+
+
+def run_sql_agent(
+    client: OpenRouter,
+    model: str,
+    system_prompt: str,
+    user_query: str,
+    database_path: str | Path,
+    row_limit: int = 100,
+) -> SQLAgentResult:
+    sql_generation_result = generate_sql(
+        client=client, model=model, system_prompt=system_prompt, user_query=user_query
+    )
+    columns, rows = execute_query(
+        database_path=database_path,
+        sql=sql_generation_result.generation.sql,
+        row_limit=row_limit,
+    )
+
+    return SQLAgentResult(
+        result=sql_generation_result, columns=columns, rows=[list(row) for row in rows]
+    )

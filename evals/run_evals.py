@@ -1,7 +1,11 @@
 from pathlib import Path
 from math import isclose
 
+from openrouter import OpenRouter
 from pydantic import BaseModel, ConfigDict, Field
+
+from agents.sql_agent import SQLAgentResult, TokenUsage, run_sql_agent
+from db.execute import execute_query
 
 type CellValue = str | int | float | None
 type Row = list[CellValue]
@@ -15,6 +19,17 @@ class GoldenCase(BaseModel):
     question: str = Field(min_length=1)
     expected_sql: str = Field(min_length=1)
     ordered: bool
+
+
+class EvalCaseResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    case_id: str = Field(min_length=1)
+    category: str = Field(min_length=1)
+    passed: bool
+    generated_sql: str | None = Field(default=None, min_length=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    usage: TokenUsage | None = None
+    error: str | None = Field(default=None, min_length=1)
 
 
 def load_golden_cases(golden_file: str | Path) -> list[GoldenCase]:
@@ -75,3 +90,38 @@ def rows_match(expected_rows: Rows, actual_rows: Rows, ordered: bool) -> bool:
         del unmatched_actual_rows[matched_index]
 
     return True
+
+
+def evaluate_case(
+    case: GoldenCase,
+    client: OpenRouter,
+    model: str,
+    system_prompt: str,
+    database_path: str | Path,
+    row_limit: int = 100,
+) -> EvalCaseResult:
+
+    _, expected_row_tuples = execute_query(
+        database_path=database_path, sql=case.expected_sql, row_limit=row_limit
+    )
+    expected_rows: Rows = [list(row) for row in expected_row_tuples]
+    agent_result: SQLAgentResult = run_sql_agent(
+        client=client,
+        model=model,
+        system_prompt=system_prompt,
+        user_query=case.question,
+        database_path=database_path,
+        row_limit=row_limit,
+    )
+    passed = rows_match(
+        expected_rows=expected_rows, actual_rows=agent_result.rows, ordered=case.ordered
+    )
+    eval_case_result = EvalCaseResult(
+        case_id=case.id,
+        category=case.category,
+        passed=passed,
+        generated_sql=agent_result.result.generation.sql,
+        confidence=agent_result.result.generation.confidence,
+        usage=agent_result.result.usage,
+    )
+    return eval_case_result

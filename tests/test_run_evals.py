@@ -1,8 +1,18 @@
 from pathlib import Path
+from unittest.mock import Mock
 
 from pydantic import ValidationError
 import pytest
-from evals.run_evals import GoldenCase, load_golden_cases, rows_match, Rows
+from agents.sql_agent import TokenUsage
+from db.schema import DATABASE_PATH
+from evals.run_evals import (
+    EvalCaseResult,
+    GoldenCase,
+    Rows,
+    evaluate_case,
+    load_golden_cases,
+    rows_match,
+)
 
 
 def test_golden_case():
@@ -136,3 +146,89 @@ def test_rows_match_unordered_float_tolerance():
 
     assert rows_match(expected_rows, nearly_equal_rows, ordered=False)
     assert not rows_match(expected_rows, different_rows, ordered=False)
+
+
+def test_eval_case_result():
+    usage = TokenUsage(
+        prompt_tokens=100,
+        completion_tokens=20,
+        total_tokens=120,
+        cost=0.001,
+    )
+
+    result = EvalCaseResult(
+        case_id="case_01",
+        category="simple_selection",
+        passed=True,
+        generated_sql="SELECT 1;",
+        confidence=0.9,
+        usage=usage,
+        error=None,
+    )
+
+    assert result.case_id == "case_01"
+    assert result.category == "simple_selection"
+    assert result.passed is True
+    assert result.generated_sql == "SELECT 1;"
+    assert result.confidence == 0.9
+    assert result.usage == usage
+    assert result.error is None
+
+
+def test_eval_case_result_for_error():
+    result = EvalCaseResult(
+        case_id="case_01",
+        category="simple_selection",
+        passed=False,
+        error="SQL generation failed",
+    )
+
+    assert result.passed is False
+    assert result.generated_sql is None
+    assert result.confidence is None
+    assert result.usage is None
+    assert result.error == "SQL generation failed"
+
+
+def test_evaluate_case_passes_matching_result():
+    case = GoldenCase(
+        id="case_01",
+        category="scalar_aggregate",
+        question="Return one.",
+        expected_sql="SELECT 1;",
+        ordered=True,
+    )
+    client = Mock()
+    response = Mock()
+    response.choices = [Mock()]
+    response.choices[0].message.content = """
+    {
+      "sql": "SELECT 1",
+      "explanation": "Returns one.",
+      "confidence": 1.0
+    }
+    """
+    response.usage = Mock(
+        prompt_tokens=100,
+        completion_tokens=20,
+        total_tokens=120,
+        cost=0.001,
+    )
+    client.chat.send.return_value = response
+
+    result = evaluate_case(
+        case=case,
+        client=client,
+        model="test-model",
+        system_prompt="system instructions",
+        database_path=DATABASE_PATH,
+    )
+
+    assert result.case_id == "case_01"
+    assert result.category == "scalar_aggregate"
+    assert result.passed is True
+    assert result.generated_sql == "SELECT 1"
+    assert result.confidence == 1.0
+    assert result.usage is not None
+    assert result.usage.total_tokens == 120
+    assert result.error is None
